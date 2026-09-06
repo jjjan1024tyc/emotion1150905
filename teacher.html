@@ -136,7 +136,6 @@
             return;
           }
 
-          // 欄位分析與同信箱去重（同帳號只留最新一筆）
           const latestByEmail = new Map();
           for (let i = 1; i < rows.length; i++) {
             const row = rows[i];
@@ -189,23 +188,32 @@
         }
       };
 
-      // 物理刪除第 2 列以後的所有列（保留第 1 列表頭，不再留空白）
+      // 物理刪除第 2 列到最後一筆資料列（保留第 1 列表頭，不留白）
       const handleClearData = async () => {
-        if (!window.confirm('確定要徹底刪除所有學生紀錄嗎？（第 1 列表頭將保留，後續資料將從第 2 列重新連續填入）')) {
+        if (!window.confirm('確定要清空學生回報紀錄嗎？（舊資料列將被物理刪除，新回報將緊接第 2 列開始）')) {
           return;
         }
 
         setIsClearing(true);
         try {
+          // 1. 取得第一工作表的 sheetId (數字 ID) 與工作表名稱
           const metaRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}`, {
             headers: { Authorization: `Bearer ${accessToken}` }
           });
           const metaData = await metaRes.json();
           const targetSheet = metaData.sheets[0];
           const numericSheetId = targetSheet.properties.sheetId;
-          const rowCount = targetSheet.properties.gridProperties.rowCount;
+          const currentSheetTitle = targetSheet.properties.title;
 
-          if (rowCount > 1) {
+          // 2. 查詢目前真正填寫到第幾列 (避免整張表被刪光導致 API 報錯)
+          const dataRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(currentSheetTitle)}!A:A`, {
+            headers: { Authorization: `Bearer ${accessToken}` }
+          });
+          const dataJson = await dataRes.json();
+          const rowCountWithData = (dataJson.values || []).length;
+
+          // 3. 若有第 2 列以後的資料，精準刪除索引 1 到 rowCountWithData
+          if (rowCountWithData > 1) {
             const deletePayload = {
               requests: [
                 {
@@ -213,8 +221,8 @@
                     range: {
                       sheetId: numericSheetId,
                       dimension: "ROWS",
-                      startIndex: 1, // 從第 2 列開始 (0-based)
-                      endIndex: rowCount // 直到最後一列全部刪除
+                      startIndex: 1,               // 索引從 1 開始（即試算表第 2 列）
+                      endIndex: rowCountWithData    // 刪到最後一筆有資料的列
                     }
                   }
                 }
@@ -231,12 +239,14 @@
             });
 
             if (!delRes.ok) {
-              throw new Error('刪除失敗，請確認是否擁有編輯權限。');
+              const errBody = await delRes.json();
+              throw new Error(errBody.error?.message || '刪除失敗');
             }
           }
 
+          // 4. 重新整理儀表板數據
           await fetchSheetData(sheetId, accessToken);
-          alert('舊資料已徹底清空！新資料將直接緊接在第 2 列連續填入。');
+          alert('舊資料已成功清空！下次學生填寫將自動由第 2 列依序填入。');
         } catch (err) {
           alert('清空失敗：' + err.message);
         } finally {
