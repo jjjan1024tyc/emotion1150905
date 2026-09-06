@@ -12,6 +12,9 @@
 <body class="bg-gray-50 min-h-screen text-slate-800">
   <div id="root"></div>
 
+  <!-- 接收 Form 背景提交的隱藏 iframe，保證不跳頁 -->
+  <iframe name="hidden_iframe" id="hidden_iframe" style="display:none;"></iframe>
+
   <script type="text/babel">
     const { useState, useEffect } = React;
 
@@ -36,34 +39,88 @@
 
     function StudentApp() {
       const [formId, setFormId] = useState('');
-      const [entryId, setEntryId] = useState('');
+      const [emailId, setEmailId] = useState('');
+      const [emoId, setEmoId] = useState('');
       const [classCode, setClassCode] = useState('');
+      const [studentEmail, setStudentEmail] = useState('');
+      const [isModalOpen, setIsModalOpen] = useState(false);
+      const [tempEmail, setTempEmail] = useState('');
+      const [myEmotion, setMyEmotion] = useState(null);
+      const [savedAlert, setSavedAlert] = useState(false);
 
       useEffect(() => {
         const params = new URLSearchParams(window.location.search);
         setFormId(params.get('fid') || '');
-        setEntryId(params.get('eid') || '');
+        setEmailId(params.get('mid') || ''); // mid: Mail ID
+        setEmoId(params.get('eid') || '');   // eid: Emotion ID
         setClassCode(params.get('c') || '');
+
+        const savedEmail = localStorage.getItem('sel_student_email');
+        if (savedEmail) {
+          setStudentEmail(savedEmail);
+        } else {
+          setIsModalOpen(true);
+        }
       }, []);
 
+      const handleSaveEmail = (e) => {
+        e.preventDefault();
+        if (tempEmail.trim()) {
+          setStudentEmail(tempEmail.trim());
+          localStorage.setItem('sel_student_email', tempEmail.trim());
+          setIsModalOpen(false);
+        }
+      };
+
       const handleSelectEmotion = (emo) => {
-        if (!formId || !entryId) {
-          alert('網址缺少 fid 或 eid 參數！');
+        if (!studentEmail) {
+          setIsModalOpen(true);
           return;
         }
 
+        setMyEmotion(emo.id);
+
+        const btn = document.getElementById('emo-btn-' + emo.id);
+        if (btn) {
+          btn.classList.add('scale-110');
+          setTimeout(() => btn.classList.remove('scale-110'), 300);
+        }
+
         const value = classCode ? `[${classCode}] ${emo.label}` : emo.label;
-        
-        // 預填答案並引導至 Google 表單驗證提交頁面
-        const targetUrl = `https://docs.google.com/forms/d/e/${formId}/viewform?usp=pp_url&entry.${entryId}=${encodeURIComponent(value)}`;
-        
-        // 開啟填寫視窗（自動帶入答案，學生只需點一下「提交」）
-        window.location.href = targetUrl;
+        const targetUrl = `https://docs.google.com/forms/d/e/${formId}/formResponse`;
+
+        const form = document.createElement('form');
+        form.action = targetUrl;
+        form.method = 'POST';
+        form.target = 'hidden_iframe';
+
+        // 題目 1：學生信箱
+        if (emailId) {
+          const mInput = document.createElement('input');
+          mInput.type = 'hidden';
+          mInput.name = `entry.${emailId}`;
+          mInput.value = studentEmail;
+          form.appendChild(mInput);
+        }
+
+        // 題目 2：情緒選項
+        const eInput = document.createElement('input');
+        eInput.type = 'hidden';
+        eInput.name = `entry.${emoId}`;
+        eInput.value = value;
+        form.appendChild(eInput);
+
+        document.body.appendChild(form);
+        form.submit();
+        document.body.removeChild(form);
+
+        setSavedAlert(true);
+        setTimeout(() => setSavedAlert(false), 2500);
       };
 
       return (
         <div className="min-h-screen font-sans pb-12">
-          <header className="bg-white shadow-sm px-6 py-4 flex justify-between items-center border-b border-gray-100">
+          <header className="bg-white shadow-sm px-6 py-4 flex flex-wrap justify-between items-center gap-4 border-b border-gray-100">
             <div className="flex items-center space-x-3">
               <div className="bg-blue-600 p-2.5 rounded-xl shadow-sm text-white">
                 <IconChart className="w-5 h-5" />
@@ -74,23 +131,45 @@
               </div>
             </div>
 
-            {classCode && (
-              <div className="text-sm bg-blue-50 text-blue-700 px-3.5 py-1.5 rounded-full border border-blue-200 font-semibold">
-                班級：{classCode}
-              </div>
-            )}
+            <div className="flex items-center gap-3">
+              {classCode && (
+                <span className="text-sm bg-blue-50 text-blue-700 px-3 py-1.5 rounded-full border border-blue-200 font-semibold">
+                  班級：{classCode}
+                </span>
+              )}
+
+              {studentEmail ? (
+                <button
+                  onClick={() => { setTempEmail(studentEmail); setIsModalOpen(true); }}
+                  className="text-xs md:text-sm bg-emerald-50 text-emerald-700 px-3.5 py-1.5 rounded-full border border-emerald-200 font-medium hover:bg-emerald-100 transition flex items-center gap-1.5"
+                  title="點擊更換信箱"
+                >
+                  <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                  <span>{studentEmail}</span>
+                  <span className="text-gray-400 text-xs">✎</span>
+                </button>
+              ) : (
+                <button
+                  onClick={() => setIsModalOpen(true)}
+                  className="text-xs md:text-sm bg-blue-600 text-white px-4 py-1.5 rounded-full font-bold shadow hover:bg-blue-700 transition"
+                >
+                  輸入信箱
+                </button>
+              )}
+            </div>
           </header>
 
           <main className="max-w-5xl mx-auto p-4 md:p-8 mt-4">
             <div className="bg-white rounded-3xl shadow-lg p-6 md:p-10 border border-gray-100">
               <div className="text-center mb-10">
                 <h2 className="text-2xl md:text-3xl font-bold text-gray-800 mb-3">你現在的狀態是？</h2>
-                <p className="text-gray-500">點選貼近你狀態的按鈕，即可記錄你的 Gmail 與情緒：</p>
+                <p className="text-gray-500">點擊按鈕直接送出，自動記錄到課堂統計：</p>
               </div>
 
               <div className="flex flex-wrap justify-center gap-4 md:gap-6">
                 {EMOTIONS.map((emo) => {
                   const Icon = emo.icon;
+                  const isSelected = myEmotion === emo.id;
                   return (
                     <div key={emo.id} className="group relative flex flex-col items-center">
                       <div className="absolute bottom-full mb-3 w-60 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none z-30 flex flex-col items-center">
@@ -101,24 +180,71 @@
                       </div>
 
                       <button
+                        id={'emo-btn-' + emo.id}
                         onClick={() => handleSelectEmotion(emo)}
-                        className={`w-20 h-20 md:w-24 md:h-24 rounded-2xl flex flex-col items-center justify-center transition-all duration-300 transform group-hover:-translate-y-2 group-hover:shadow-lg bg-gray-50 border-2 border-gray-100 hover:border-transparent hover:${emo.color}`}
+                        className={`w-20 h-20 md:w-24 md:h-24 rounded-2xl flex flex-col items-center justify-center transition-all duration-300 transform group-hover:-translate-y-2 group-hover:shadow-lg ${
+                          isSelected 
+                            ? 'ring-4 ring-offset-4 ring-blue-500 scale-105 ' + emo.color
+                            : 'bg-gray-50 border-2 border-gray-100 hover:border-transparent hover:' + emo.color
+                        }`}
                       >
-                        <Icon className={`w-8 h-8 md:w-10 md:h-10 mb-2 ${emo.textColor}`} />
-                        <span className="text-xs md:text-sm font-bold text-gray-700">
+                        <Icon className={`w-8 h-8 md:w-10 md:h-10 mb-2 ${isSelected ? 'text-white' : emo.textColor}`} />
+                        <span className={`text-xs md:text-sm font-bold ${isSelected ? 'text-white' : 'text-gray-700'}`}>
                           {emo.label}
                         </span>
                       </button>
+
+                      {isSelected ? (
+                        <div className="mt-3 text-blue-600 font-bold text-xs md:text-sm flex items-center animate-bounce">
+                          <span className="mr-1">已回報</span>
+                          <div className="w-2 h-2 bg-blue-600 rounded-full"></div>
+                        </div>
+                      ) : (
+                        <div className="mt-3 h-5"></div>
+                      )}
                     </div>
                   );
                 })}
               </div>
+
+              {savedAlert && (
+                <div className="mt-6 mx-auto max-w-md bg-emerald-50 text-emerald-700 text-center py-2.5 px-4 rounded-xl text-sm font-semibold border border-emerald-200 flex items-center justify-center gap-2 shadow-sm animate-fade-in">
+                  <span className="text-emerald-600 font-bold">✓</span> 狀態已自動送出至試算表！
+                </div>
+              )}
 
               <div className="mt-12 bg-blue-50 rounded-2xl p-6 text-center text-blue-900 text-sm md:text-base border border-blue-100 shadow-sm leading-relaxed">
                 💡 <strong>SEL 溫馨叮嚀：</strong> 程式卡關、出錯是很自然的學習歷程！先深呼吸、或是向鄰近同學討論，轉換一下思緒，通常答案就會浮現出來囉！
               </div>
             </div>
           </main>
+
+          {isModalOpen && (
+            <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-white rounded-3xl p-6 md:p-8 max-w-md w-full shadow-2xl border border-gray-100">
+                <h3 className="text-xl font-bold text-gray-800 text-center mb-2">請輸入您的 Google 信箱</h3>
+                <p className="text-xs text-gray-500 text-center mb-6">僅需輸入一次，瀏覽器將自動為您記憶：</p>
+                
+                <form onSubmit={handleSaveEmail} className="space-y-4">
+                  <input
+                    type="email"
+                    required
+                    placeholder="例如：user@gmail.com 或學校信箱"
+                    value={tempEmail}
+                    onChange={(e) => setTempEmail(e.target.value)}
+                    className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    autoFocus
+                  />
+                  <button
+                    type="submit"
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition shadow"
+                  >
+                    確認儲存
+                  </button>
+                </form>
+              </div>
+            </div>
+          )}
         </div>
       );
     }
