@@ -95,7 +95,6 @@
         }
       };
 
-      // 讀取試算表並檢查權限
       const fetchSheetData = async (targetSheetId, token) => {
         const sid = targetSheetId || sheetId;
         const currentToken = token || accessToken;
@@ -109,7 +108,6 @@
         setAuthError('');
 
         try {
-          // 1. 取得試算表資訊（此步可直接驗證管理者存取權限）
           const metaRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sid}`, {
             headers: { Authorization: `Bearer ${currentToken}` }
           });
@@ -125,7 +123,6 @@
           const firstSheet = metaData.sheets[0]?.properties?.title || 'Form_Responses';
           setSheetTitle(firstSheet);
 
-          // 2. 讀取該分頁所有資料
           const dataRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sid}/values/${encodeURIComponent(firstSheet)}!A:Z`, {
             headers: { Authorization: `Bearer ${currentToken}` }
           });
@@ -133,20 +130,18 @@
           const rows = dataJson.values || [];
 
           if (rows.length <= 1) {
-            // 空表格
             setStats({});
             setTotalCount(0);
             setIsLoading(false);
             return;
           }
 
-          // 3. 欄位自動適配與最新資料去重（同信箱只取最新）
+          // 欄位分析與同信箱去重（同帳號只留最新一筆）
           const latestByEmail = new Map();
           for (let i = 1; i < rows.length; i++) {
             const row = rows[i];
             const fullRowText = row.join(' ');
-            
-            // 擷取 Email
+
             let email = '';
             if (row[3] && row[3].includes('@')) {
               email = row[3].trim();
@@ -155,7 +150,6 @@
               if (match) email = match[1];
             }
 
-            // 擷取情緒選項
             let emotion = '';
             for (const emo of EMOTIONS) {
               if (fullRowText.includes(emo.label)) {
@@ -171,7 +165,6 @@
             }
           }
 
-          // 4. 計算各狀態人數
           const counts = {};
           EMOTIONS.forEach(e => counts[e.label] = 0);
 
@@ -196,31 +189,54 @@
         }
       };
 
-      // 清空試算表（保留第 1 列標題列）
+      // 物理刪除第 2 列以後的所有列（保留第 1 列表頭，不再留空白）
       const handleClearData = async () => {
-        if (!window.confirm('確定要清空試算表中的所有學生回報紀錄嗎？（標題列將會保留）')) {
+        if (!window.confirm('確定要徹底刪除所有學生紀錄嗎？（第 1 列表頭將保留，後續資料將從第 2 列重新連續填入）')) {
           return;
         }
 
         setIsClearing(true);
         try {
-          // 清除第 2 列以後的所有儲存格
-          const clearRange = `${sheetTitle}!A2:Z`;
-          const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(clearRange)}:clear`, {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-              'Content-Type': 'application/json'
-            }
+          const metaRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}`, {
+            headers: { Authorization: `Bearer ${accessToken}` }
           });
+          const metaData = await metaRes.json();
+          const targetSheet = metaData.sheets[0];
+          const numericSheetId = targetSheet.properties.sheetId;
+          const rowCount = targetSheet.properties.gridProperties.rowCount;
 
-          if (!res.ok) {
-            throw new Error('清空失敗，請確認是否擁有編輯權限。');
+          if (rowCount > 1) {
+            const deletePayload = {
+              requests: [
+                {
+                  deleteDimension: {
+                    range: {
+                      sheetId: numericSheetId,
+                      dimension: "ROWS",
+                      startIndex: 1, // 從第 2 列開始 (0-based)
+                      endIndex: rowCount // 直到最後一列全部刪除
+                    }
+                  }
+                }
+              ]
+            };
+
+            const delRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}:batchUpdate`, {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify(deletePayload)
+            });
+
+            if (!delRes.ok) {
+              throw new Error('刪除失敗，請確認是否擁有編輯權限。');
+            }
           }
 
-          // 重新載入最新統計
           await fetchSheetData(sheetId, accessToken);
-          alert('試算表已成功清空！');
+          alert('舊資料已徹底清空！新資料將直接緊接在第 2 列連續填入。');
         } catch (err) {
           alert('清空失敗：' + err.message);
         } finally {
@@ -230,7 +246,6 @@
 
       return (
         <div className="min-h-screen font-sans pb-16">
-          {/* 頂部導覽列 */}
           <header className="bg-white shadow-sm px-6 py-4 flex flex-wrap justify-between items-center gap-4 border-b border-gray-100">
             <div className="flex items-center space-x-3">
               <div className="bg-indigo-600 p-2.5 rounded-xl shadow-sm text-white">
@@ -281,7 +296,6 @@
           </header>
 
           <main className="max-w-6xl mx-auto p-4 md:p-8 mt-4">
-            {/* 未授權或身分非管理員時的阻擋卡片 */}
             {!accessToken || authError ? (
               <div className="bg-white rounded-3xl shadow-lg p-8 md:p-12 text-center border border-gray-100 max-w-xl mx-auto mt-10">
                 <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
@@ -308,13 +322,12 @@
                 </button>
               </div>
             ) : (
-              /* 已授權：顯示 7 個按鈕與人數、比例 */
               <div className="bg-white rounded-3xl shadow-lg p-6 md:p-10 border border-gray-100">
                 <div className="flex flex-wrap justify-between items-center mb-8 pb-4 border-b border-gray-100 gap-4">
                   <div>
                     <h2 className="text-2xl font-bold text-gray-800">全班即時情緒狀態統計</h2>
                     <p className="text-xs md:text-sm text-gray-400 mt-1">
-                      有效已回報總人數：<span className="font-bold text-blue-600 text-base">{totalCount}</span> 人（重複填寫已自動取最新）
+                      有效已回報總人數：<span className="font-bold text-blue-600 text-base">{totalCount}</span> 人（重複填寫已自動取最新狀態）
                     </p>
                   </div>
 
@@ -332,7 +345,6 @@
                   </button>
                 </div>
 
-                {/* 7 個情緒卡片，直接在下方呈現「人數 / 百分比」 */}
                 <div className="flex flex-wrap justify-center gap-3 sm:gap-4 md:gap-5">
                   {EMOTIONS.map((emo) => {
                     const Icon = emo.icon;
@@ -341,7 +353,6 @@
 
                     return (
                       <div key={emo.id} className="flex flex-col items-center">
-                        {/* 與學生端同款按鈕卡片（展示用） */}
                         <div
                           className={`w-20 h-20 md:w-24 md:h-24 rounded-2xl flex flex-col items-center justify-center transition bg-gray-50 border-2 border-gray-100 ${
                             count > 0 ? emo.color + ' text-white shadow-sm' : ''
@@ -353,7 +364,6 @@
                           </span>
                         </div>
 
-                        {/* 按鈕正下方呈現：人數與百分比 */}
                         <div className="mt-3 text-center">
                           <div className="text-lg md:text-xl font-black text-gray-800">
                             {count} <span className="text-xs font-normal text-gray-500">人</span>
@@ -367,12 +377,11 @@
                   })}
                 </div>
 
-                {/* 課堂提問引導 */}
                 <div className="mt-12 bg-slate-50 rounded-2xl p-5 border border-slate-200 text-xs md:text-sm text-slate-600 flex items-start gap-3">
                   <span className="text-lg">💡</span>
                   <div>
                     <span className="font-bold text-slate-800">教學小提示：</span>
-                    當卡關挫折或焦慮迷茫比例超過 30% 時，建議暫停全班操作進行共同步驟示範；每堂課更換實作單元時，可善用右上角「清空試算表」快速重啟新一輪調查。
+                    當卡關挫折或焦慮迷茫比例超過 30% 時，建議暫停全班操作進行共同步驟示範；每堂課更換實作單元時，可善用右上角「清空試算表資料」徹底刪除舊列，快速重啟新一輪調查。
                   </div>
                 </div>
               </div>
